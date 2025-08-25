@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Proxy Browser</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .toolbar {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nav-btn {
+            background: #f0f0f0;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .nav-btn:hover:not(:disabled) {
+            background: #e0e0e0;
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .url-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            background: #fff;
+            border: 1px solid #d0d0d0;
+            border-radius: 8px;
+            padding: 0 12px;
+            height: 40px;
+        }
+
+        .url-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 14px;
+            padding: 8px 0;
+        }
+
+        .go-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 8px;
+            transition: background 0.2s;
+        }
+
+        .go-btn:hover {
+            background: #0056b3;
+        }
+
+        .browser-frame {
+            flex: 1;
+            border: none;
+            background: white;
+        }
+
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+
+        .error {
+            background: #ffe6e6;
+            border: 1px solid #ff9999;
+            color: #cc0000;
+            padding: 12px;
+            margin: 16px;
+            border-radius: 6px;
+            display: none;
+        }
+
+        .quick-links {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .quick-link {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #495057;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .quick-link:hover {
+            background: #e9ecef;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="nav-buttons">
+            <button class="nav-btn" id="backBtn" disabled>← Back</button>
+            <button class="nav-btn" id="forwardBtn" disabled>Forward →</button>
+            <button class="nav-btn" id="refreshBtn">⟳ Refresh</button>
+        </div>
+        
+        <div class="url-container">
+            <input type="url" class="url-input" id="urlInput" placeholder="Enter a URL (e.g., https://example.com)" autocomplete="off">
+            <button class="go-btn" id="goBtn">Go</button>
+        </div>
+
+        <div class="quick-links">
+            <span>Quick:</span>
+            <a class="quick-link" href="#" data-url="https://www.google.com">Google</a>
+            <a class="quick-link" href="#" data-url="https://www.wikipedia.org">Wikipedia</a>
+            <a class="quick-link" href="#" data-url="https://news.ycombinator.com">HN</a>
+        </div>
+    </div>
+
+    <div class="error" id="errorMsg"></div>
+    
+    <iframe class="browser-frame" id="browserFrame" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+    
+    <div class="loading" id="loadingMsg" style="display: none;">Loading...</div>
+
+    <script>
+        class ProxyBrowser {
+            constructor() {
+                this.history = [];
+                this.currentIndex = -1;
+                this.initializeElements();
+                this.attachEventListeners();
+            }
+
+            initializeElements() {
+                this.urlInput = document.getElementById('urlInput');
+                this.goBtn = document.getElementById('goBtn');
+                this.backBtn = document.getElementById('backBtn');
+                this.forwardBtn = document.getElementById('forwardBtn');
+                this.refreshBtn = document.getElementById('refreshBtn');
+                this.browserFrame = document.getElementById('browserFrame');
+                this.loadingMsg = document.getElementById('loadingMsg');
+                this.errorMsg = document.getElementById('errorMsg');
+            }
+
+            attachEventListeners() {
+                this.goBtn.addEventListener('click', () => this.navigateTo(this.urlInput.value));
+                this.urlInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.navigateTo(this.urlInput.value);
+                    }
+                });
+
+                this.backBtn.addEventListener('click', () => this.goBack());
+                this.forwardBtn.addEventListener('click', () => this.goForward());
+                this.refreshBtn.addEventListener('click', () => this.refresh());
+
+                // Quick links
+                document.querySelectorAll('.quick-link').forEach(link => {
+                    link.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const url = e.target.dataset.url;
+                        this.urlInput.value = url;
+                        this.navigateTo(url);
+                    });
+                });
+
+                // Handle iframe load events
+                this.browserFrame.addEventListener('load', () => {
+                    this.hideLoading();
+                    this.hideError();
+                });
+            }
+
+            normalizeUrl(url) {
+                if (!url) return '';
+                
+                // Add protocol if missing
+                if (!url.match(/^https?:\/\//)) {
+                    // Check if it looks like a domain
+                    if (url.includes('.') && !url.includes(' ')) {
+                        url = 'https://' + url;
+                    } else {
+                        // Treat as search query
+                        url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+                    }
+                }
+                
+                return url;
+            }
+
+            async navigateTo(url) {
+                if (!url.trim()) return;
+
+                url = this.normalizeUrl(url.trim());
+                
+                try {
+                    this.showLoading();
+                    this.hideError();
+                    
+                    // Update URL input
+                    this.urlInput.value = url;
+                    
+                    // Create proxy URL
+                    const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+                    
+                    // Update browser frame
+                    this.browserFrame.src = proxyUrl;
+                    
+                    // Update history
+                    this.addToHistory(url);
+                    this.updateNavigationButtons();
+                    
+                } catch (error) {
+                    this.hideLoading();
+                    this.showError('Failed to load the website: ' + error.message);
+                }
+            }
+
+            addToHistory(url) {
+                // Remove any forward history when navigating to new page
+                this.history = this.history.slice(0, this.currentIndex + 1);
+                this.history.push(url);
+                this.currentIndex = this.history.length - 1;
+            }
+
+            goBack() {
+                if (this.currentIndex > 0) {
+                    this.currentIndex--;
+                    const url = this.history[this.currentIndex];
+                    this.urlInput.value = url;
+                    const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+                    this.browserFrame.src = proxyUrl;
+                    this.updateNavigationButtons();
+                }
+            }
+
+            goForward() {
+                if (this.currentIndex < this.history.length - 1) {
+                    this.currentIndex++;
+                    const url = this.history[this.currentIndex];
+                    this.urlInput.value = url;
+                    const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+                    this.browserFrame.src = proxyUrl;
+                    this.updateNavigationButtons();
+                }
+            }
+
+            refresh() {
+                if (this.history.length > 0) {
+                    const currentUrl = this.history[this.currentIndex];
+                    this.navigateTo(currentUrl);
+                }
+            }
+
+            updateNavigationButtons() {
+                this.backBtn.disabled = this.currentIndex <= 0;
+                this.forwardBtn.disabled = this.currentIndex >= this.history.length - 1;
+            }
+
+            showLoading() {
+                this.loadingMsg.style.display = 'block';
+            }
+
+            hideLoading() {
+                this.loadingMsg.style.display = 'none';
+            }
+
+            showError(message) {
+                this.errorMsg.textContent = message;
+                this.errorMsg.style.display = 'block';
+            }
+
+            hideError() {
+                this.errorMsg.style.display = 'none';
+            }
+        }
+
+        // Initialize the proxy browser
+        document.addEventListener('DOMContentLoaded', () => {
+            new ProxyBrowser();
+        });
+    </script>
+</body>
+</html>
